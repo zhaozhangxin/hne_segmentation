@@ -2,8 +2,11 @@
 import re
 import warnings
 from pathlib import Path
+from typing import Generator, Tuple, Union
 
+import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 
 
 def _validate_unique_item(candidates: list, tag: str, raise_error: bool = True):
@@ -151,4 +154,120 @@ def parse_atomx_dir(
     return {"flat_files": flat_files_dict, "fov_files": fov_files_dict}
 
 
-# %%
+def crop_regions_from_image(
+    image: NDArray,
+    segmentation: NDArray,
+    background: Union[int, float, list, tuple] = 0,
+    channel_axis: int = -1,
+) -> Generator[Tuple[int, Union[NDArray, Tuple[NDArray, ...]]], None, None]:
+    """
+    Crop individual regions from an image based on segmentation mask.
+
+    Parameters
+    ----------
+    image : NDArray
+        Input image, can be 2D (YX) or 3D (YXC or CYX).
+    segmentation : NDArray
+        Segmentation mask with same spatial dimensions as image.
+        Background should be 0, regions labeled with positive integers.
+    background : int, float, list, or tuple, optional
+        Background value(s) to fill outside the region mask.
+        - If scalar: single cropped image with that background value
+        - If list/tuple: multiple cropped images, one per background value (each value is a scalar)
+        Default is 0.
+    channel_axis : int, optional
+        Position of channel axis in image array.
+        - Use -1 or 2 for YXC format (default)
+        - Use 0 for CYX format
+        Ignored if image is 2D.
+
+    Yields
+    ------
+    region_id : int
+        ID of the current region from segmentation mask.
+    cropped_image : NDArray or tuple of NDArray
+        - If background is scalar: single cropped image
+        - If background is list/tuple: tuple of cropped images, one per background value
+
+    Raises
+    ------
+    ValueError
+        If image spatial dimensions don't match segmentation shape.
+        If channel_axis is not -1, 2, or 0.
+
+    Examples
+    --------
+    >>> # Single background
+    >>> for region_id, img_crop in crop_regions_from_image(hne, seg, background=0):
+    ...     print(f"Region {region_id}: {img_crop.shape}")
+
+    >>> # Multiple backgrounds
+    >>> for region_id, (img_black, img_white) in crop_regions_from_image(hne, seg, background=[0, 255]):
+    ...     print(f"Region {region_id}: black={img_black.shape}, white={img_white.shape}")
+    """
+    # Validate channel_axis
+    if channel_axis not in [-1, 2, 0]:
+        raise ValueError(
+            f"channel_axis must be -1, 2 (for YXC format) or 0 (for CYX format), got {channel_axis}"
+        )
+
+    # Validate spatial dimensions match
+    if (
+        image.shape[:2] != segmentation.shape  # YX or YXC
+        and image.shape[-2:] != segmentation.shape  # CYX
+    ):
+        raise ValueError(
+            f"Image spatial dimensions {image.shape} don't match "
+            f"segmentation shape {segmentation.shape}"
+        )
+
+    # Determine if image has channels and normalize to YXC format
+    is_3d = image.ndim == 3
+    restore_channel_axis = False
+    if is_3d and channel_axis == 0:
+        # Convert CYX to YXC for processing
+        image = np.moveaxis(image, 0, -1)
+        restore_channel_axis = True
+
+    # Determine if multiple backgrounds requested
+    multiple_backgrounds = isinstance(background, (list, tuple))
+
+    # Get unique region IDs (excluding background 0)
+    region_ids = np.unique(segmentation)
+    region_ids = region_ids[region_ids != 0]
+
+    # Process each region
+    for region_id in region_ids:
+        # Create binary mask for current region
+        region_mask = segmentation == region_id
+
+        # Find bounding box
+        ys, xs = np.where(region_mask)
+        ymin, ymax = ys.min(), ys.max()
+        xmin, xmax = xs.min(), xs.max()
+
+        # Crop mask to bounding box
+        region_mask_crop = region_mask[ymin : ymax + 1, xmin : xmax + 1]
+
+        # Process based on number of backgrounds
+        if multiple_backgrounds:
+            # Generate multiple crops with different backgrounds
+            img_crops = []
+            for bg_value in background:
+                img_crop = image[ymin : ymax + 1, xmin : xmax + 1].copy()
+                img_crop[~region_mask_crop] = bg_value
+
+                if restore_channel_axis:
+                    img_crop = np.moveaxis(img_crop, -1, 0)
+                img_crops.append(img_crop)
+
+            yield int(region_id), tuple(img_crops)
+
+        else:
+            img_crop = image[ymin : ymax + 1, xmin : xmax + 1].copy()
+            img_crop[~region_mask_crop] = background
+
+            if restore_channel_axis:
+                img_crop = np.moveaxis(img_crop, -1, 0)
+
+            yield int(region_id), img_crop
