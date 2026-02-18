@@ -1,1 +1,1 @@
-from hne_segmentation.hne_segmentation import crop_regions_from_image, parse_atomx_dir
+from hne_segmentation.hne_segmentation import crop_regions_from_image, parse_atomx_dir, crop_regions_with_context

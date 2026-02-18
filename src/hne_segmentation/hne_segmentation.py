@@ -271,3 +271,159 @@ def crop_regions_from_image(
                 img_crop = np.moveaxis(img_crop, -1, 0)
 
             yield int(region_id), img_crop
+
+def crop_regions_with_context(
+    image: NDArray,
+    segmentation: NDArray,
+    crop_size: int = 448,
+    pad_value: Union[int, float] = 0,
+    channel_axis: int = -1,
+    center_on_region: bool = True,
+    skip_boundary_regions: bool = False,
+) -> Generator[Tuple[int, NDArray], None, None]:
+    """
+    Crop regions from an image with surrounding context to a fixed size.
+    
+    Unlike crop_regions_from_image, this function preserves the original image 
+    content around each region (not just the segmented region itself), providing
+    biological context from neighboring tissue.
+
+    Parameters
+    ----------
+    image : NDArray
+        Input image, can be 2D (YX) or 3D (YXC or CYX).
+    segmentation : NDArray
+        Segmentation mask with same spatial dimensions as image.
+        Background should be 0, regions labeled with positive integers.
+        Note: The segmentation is only used to locate regions, the cropped
+        image will contain all original pixel values within the crop area.
+    crop_size : int, optional
+        Size of the output square crop (default: 448).
+    pad_value : int or float, optional
+        Value to fill padding areas when crop extends beyond image boundaries.
+        Default is 0. Only used when skip_boundary_regions is False.
+    channel_axis : int, optional
+        Position of channel axis in image array.
+        - Use -1 or 2 for YXC format (default)
+        - Use 0 for CYX format
+        Ignored if image is 2D.
+    center_on_region : bool, optional
+        If True, center the crop on the region's bounding box center.
+        If False, center on the region's centroid. Default is True.
+    skip_boundary_regions : bool, optional
+        If True, skip regions where the crop would extend beyond image boundaries.
+        If False, pad out-of-bounds areas with pad_value. Default is True.
+
+    Yields
+    ------
+    region_id : int
+        ID of the current region from segmentation mask.
+    cropped_image : NDArray
+        Cropped image of size (crop_size, crop_size) or (crop_size, crop_size, C)
+        containing the region and its surrounding tissue context.
+
+    Raises
+    ------
+    ValueError
+        If image spatial dimensions don't match segmentation shape.
+        If channel_axis is not -1, 2, or 0.
+
+    Examples
+    --------
+    >>> # Crop 448x448 regions with surrounding tissue context, skip boundary cells
+    >>> for region_id, img_crop in crop_regions_with_context(hne, seg, crop_size=448):
+    ...     print(f"Region {region_id}: {img_crop.shape}")  # (448, 448, 3)
+    ...     # img_crop contains only fully within-bounds crops, no white padding
+    """
+    # Validate channel_axis
+    if channel_axis not in [-1, 2, 0]:
+        raise ValueError(
+            f"channel_axis must be -1, 2 (for YXC format) or 0 (for CYX format), got {channel_axis}"
+        )
+
+    # Validate spatial dimensions match
+    if (
+        image.shape[:2] != segmentation.shape  # YX or YXC
+        and image.shape[-2:] != segmentation.shape  # CYX
+    ):
+        raise ValueError(
+            f"Image spatial dimensions {image.shape} don't match "
+            f"segmentation shape {segmentation.shape}"
+        )
+
+    # Determine if image has channels and normalize to YXC format
+    is_3d = image.ndim == 3
+    restore_channel_axis = False
+    if is_3d and channel_axis == 0:
+        # Convert CYX to YXC for processing
+        image = np.moveaxis(image, 0, -1)
+        restore_channel_axis = True
+
+    # Get image dimensions
+    img_height, img_width = image.shape[:2]
+
+    # Get unique region IDs (excluding background 0)
+    region_ids = np.unique(segmentation)
+    region_ids = region_ids[region_ids != 0]
+
+    # Process each region
+    for region_id in region_ids:
+        # Create binary mask for current region
+        region_mask = segmentation == region_id
+
+        # Find bounding box
+        ys, xs = np.where(region_mask)
+        ymin, ymax = ys.min(), ys.max()
+        xmin, xmax = xs.min(), xs.max()
+
+        # Calculate center point
+        if center_on_region:
+            # Use bounding box center
+            center_y = (ymin + ymax) // 2
+            center_x = (xmin + xmax) // 2
+        else:
+            # Use centroid
+            center_y = int(ys.mean())
+            center_x = int(xs.mean())
+
+        # Calculate crop boundaries centered on the region
+        half_size = crop_size // 2
+        crop_ymin = center_y - half_size
+        crop_ymax = crop_ymin + crop_size
+        crop_xmin = center_x - half_size
+        crop_xmax = crop_xmin + crop_size
+
+        # Check if crop is fully within image bounds
+        if skip_boundary_regions:
+            if crop_ymin < 0 or crop_ymax > img_height or crop_xmin < 0 or crop_xmax > img_width:
+                # Skip this region - it's too close to the boundary
+                continue
+
+            # Directly crop the region (no padding needed)
+            img_crop = image[crop_ymin:crop_ymax, crop_xmin:crop_xmax].copy()
+
+        else:
+            # Create output array filled with pad_value (for out-of-bounds areas)
+            if is_3d:
+                img_crop = np.full((crop_size, crop_size, image.shape[-1]), pad_value, dtype=image.dtype)
+            else:
+                img_crop = np.full((crop_size, crop_size), pad_value, dtype=image.dtype)
+
+            # Calculate valid region in both source and destination
+            src_ymin = max(0, crop_ymin)
+            src_ymax = min(img_height, crop_ymax)
+            src_xmin = max(0, crop_xmin)
+            src_xmax = min(img_width, crop_xmax)
+
+            dst_ymin = src_ymin - crop_ymin
+            dst_ymax = dst_ymin + (src_ymax - src_ymin)
+            dst_xmin = src_xmin - crop_xmin
+            dst_xmax = dst_xmin + (src_xmax - src_xmin)
+
+            # Copy the original image content (including surrounding tissue)
+            img_crop[dst_ymin:dst_ymax, dst_xmin:dst_xmax] = image[src_ymin:src_ymax, src_xmin:src_xmax]
+
+        if restore_channel_axis:
+            img_crop = np.moveaxis(img_crop, -1, 0)
+
+        yield int(region_id), img_crop   
