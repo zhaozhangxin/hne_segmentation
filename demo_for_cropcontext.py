@@ -13,22 +13,27 @@ TQDM_FORMAT = "{desc}: {percentage:3.0f}%|{bar:30}| {n_fmt}/{total_fmt} [{elapse
 
 cosmx_root = Path("/mnt/nfs/storage/cosmx/cosmx_backup")
 hne_root = Path("/mnt/nfs/storage/shuli_temp/20251009_inframe_cosmx_he_rcc")
-output_root = Path("/mnt/nfs/storage/zhangxin_temp/251208_zhangxin_hne_segmentation")
+output_root = Path("/mnt/nfs/storage/zhangxin_temp/260218_zhangxin_hne_segmentation")
 
 
 # hne_tag to cosmx_tag
+# tag_dict = {
+#     "RCC_TMA001_section07_v132": "RCC_TMA001_section07_v132",
+#     "RCC_TMA002_section07_v132": "RCC_TMA002_section07_v132",
+#     "RCC_TMA003_section07_v132": "RCC_TMA003_section07_v132",
+#     "RCC_TMA004_section07_v132": "RCC_TMA004_section07_v132",
+#     "RCC_TMA541_section07_v132": "RCC_TMA541_section07_2ug_v132",
+#     "RCC_TMA542_section05_240802_v132": "RCC_TMA542_section05_v132",
+#     "RCC_TMA542_section05_v132": "RCC_TMA542_section05_v132",
+#     "RCC_TMA543_section05_240802_v132": "RCC_TMA543_section05_v132",
+#     "RCC_TMA543_section05_v132": "RCC_TMA543_section05_v132",
+#     "RCC_TMA544_section05_240802_v132": "RCC_TMA544_section05_v132",
+#     "RCC_TMA544_section05_v132": "RCC_TMA544_section05_v132",
+#     "RCC_TMA609_section05_240802_v132": "RCC_TMA609_section05_v132",
+#     "RCC_TMA609_section05_v132": "RCC_TMA609_section05_v132",
+# }
+
 tag_dict = {
-    "RCC_TMA001_section07_v132": "RCC_TMA001_section07_v132",
-    "RCC_TMA002_section07_v132": "RCC_TMA002_section07_v132",
-    "RCC_TMA003_section07_v132": "RCC_TMA003_section07_v132",
-    "RCC_TMA004_section07_v132": "RCC_TMA004_section07_v132",
-    "RCC_TMA541_section07_v132": "RCC_TMA541_section07_2ug_v132",
-    "RCC_TMA542_section05_240802_v132": "RCC_TMA542_section05_v132",
-    "RCC_TMA542_section05_v132": "RCC_TMA542_section05_v132",
-    "RCC_TMA543_section05_240802_v132": "RCC_TMA543_section05_v132",
-    "RCC_TMA543_section05_v132": "RCC_TMA543_section05_v132",
-    "RCC_TMA544_section05_240802_v132": "RCC_TMA544_section05_v132",
-    "RCC_TMA544_section05_v132": "RCC_TMA544_section05_v132",
     "RCC_TMA609_section05_240802_v132": "RCC_TMA609_section05_v132",
     "RCC_TMA609_section05_v132": "RCC_TMA609_section05_v132",
 }
@@ -54,7 +59,7 @@ for i_tag, (hne_tag, cosmx_tag) in enumerate(tag_dict.items()):
 
         if hne_tag not in missing_fovs:
             missing_fovs[hne_tag] = {}
-        missing_fovs[hne_tag]["in_segmentation_not_in_hne"] = _fovs
+        missing_fovs[hne_tag]["in_segmentation_not_in_hne"] = list(_fovs)
 
     if len(set(fovs_hne) - set(fovs)) > 0:
         _fovs = set(fovs_hne) - set(fovs)
@@ -63,7 +68,7 @@ for i_tag, (hne_tag, cosmx_tag) in enumerate(tag_dict.items()):
 
         if hne_tag not in missing_fovs:
             missing_fovs[hne_tag] = {}
-        missing_fovs[hne_tag]["in_hne_not_in_segmentation"] = _fovs
+        missing_fovs[hne_tag]["in_hne_not_in_segmentation"] = list(_fovs)
 
     # %%
     output_dir = output_root / "cosmx_segmentation" / hne_tag
